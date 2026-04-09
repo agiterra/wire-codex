@@ -1,33 +1,31 @@
 # wire-codex
 
-Wire inbound adapter plugin for [Codex CLI](https://openai.com/index/openai-codex/).
-
-Connects to The Wire message broker via SSE and delivers inbound messages as MCP channel notifications. Outbound messaging is handled by [wire-ipc-codex](https://github.com/agiterra/wire-ipc-codex).
+Codex CLI plugin for The Wire — inbound SSE connection and MCP channel notifications.
 
 ## Usage
 
-Install via Codex plugin manager or clone and reference locally.
+Install via Codex CLI:
 
-## Config
+```
+codex plugin install agiterra/wire-codex
+```
 
-Set these env vars before launching Codex:
+## Configuration
 
-| Variable | Default | Description |
+| Env var | Default | Description |
 |---|---|---|
-| `WIRE_URL` | `http://localhost:9800` | Wire server URL |
-| `WIRE_AGENT_ID` | auto-generated | Your agent's unique ID |
-| `WIRE_AGENT_NAME` | same as ID | Display name |
-| `WIRE_PRIVATE_KEY` | required | Base64 PKCS8 Ed25519 private key |
+| `WIRE_URL` | `http://localhost:9800` | Wire broker URL |
+| `WIRE_AGENT_ID` | auto-generated | Agent identifier |
+| `WIRE_AGENT_NAME` | same as agent ID | Display name |
+| `WIRE_PRIVATE_KEY` | required | Base64 Ed25519 private key |
 
-## Tools
+`CREW_AGENT_ID`, `CREW_AGENT_NAME`, and `CREW_PRIVATE_KEY` override the above when set by the crew launcher.
 
-- `set_plan` — Update your plan on the Wire dashboard
-- `heartbeat_create` — Schedule a recurring prompt
-- `heartbeat_delete` — Delete a scheduled heartbeat
-- `heartbeat_list` — List scheduled heartbeats
+## What it does
 
-## Part of the Agiterra ecosystem
+Connects to The Wire message broker via SSE and delivers inbound messages as MCP channel notifications. Outbound messaging is handled by [wire-ipc-codex](https://github.com/agiterra/wire-ipc-codex).
 
-- [wire-tools](https://github.com/agiterra/wire-tools) — shared primitives
-- [wire-claude-code](https://github.com/agiterra/wire-claude-code) — Claude Code adapter
-- [wire-ipc-codex](https://github.com/agiterra/wire-ipc-codex) — outbound IPC for Codex
+## Source
+
+- Tools: [@agiterra/wire-tools](https://github.com/agiterra/wire-tools)
+- Claude Code adapter: [@agiterra/wire-claude-code](https://github.com/agiterra/wire-claude-code)

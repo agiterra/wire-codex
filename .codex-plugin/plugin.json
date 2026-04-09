@@ -1,14 +1,14 @@
 {
   "name": "wire",
   "version": "0.1.0",
-  "description": "Wire inbound adapter — SSE connection and MCP channel notifications",
+  "description": "Wire inbound adapter — SSE connection and MCP channel notifications.",
   "author": {
     "name": "Tim Garthwaite",
     "url": "https://github.com/mividtim"
   },
   "repository": "https://github.com/agiterra/wire-codex",
   "license": "MIT",
-  "keywords": ["wire", "agent", "sse", "mcp", "messaging"],
+  "keywords": ["wire", "channel", "agent", "sse", "mcp"],
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Wire",
