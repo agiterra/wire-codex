@@ -15,11 +15,9 @@ codex plugin install agiterra/wire-codex
 | Env var | Default | Description |
 |---|---|---|
 | `WIRE_URL` | `http://localhost:9800` | Wire broker URL |
-| `WIRE_AGENT_ID` | auto-generated | Agent identifier |
-| `WIRE_AGENT_NAME` | same as agent ID | Display name |
-| `WIRE_PRIVATE_KEY` | required | Base64 Ed25519 private key |
-
-`CREW_AGENT_ID`, `CREW_AGENT_NAME`, and `CREW_PRIVATE_KEY` override the above when set by the crew launcher.
+| `AGENT_ID` | auto-generated | Agent identifier |
+| `AGENT_NAME` | same as agent ID | Display name |
+| `AGENT_PRIVATE_KEY` | required | Base64 Ed25519 private key |
 
 ## What it does
 

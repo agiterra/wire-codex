@@ -1,6 +1,6 @@
 {
   "name": "@agiterra/wire-codex",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Wire inbound adapter for Codex CLI — SSE connection and MCP channel notifications.",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,7 @@
     "start": "bun install --no-summary && bun server.ts"
   },
   "dependencies": {
-    "@agiterra/wire-tools": "agiterra/wire-tools#v0.12.0",
+    "@agiterra/wire-tools": "agiterra/wire-tools#v2.0.0",
     "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
