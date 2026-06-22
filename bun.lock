@@ -5,7 +5,7 @@
     "": {
       "name": "@agiterra/wire-codex",
       "dependencies": {
-        "@agiterra/wire-tools": "agiterra/wire-tools#v2.7.0",
+        "@agiterra/wire-tools": "agiterra/wire-tools#v2.14.0",
         "@modelcontextprotocol/sdk": "^1.0.0",
       },
       "devDependencies": {
@@ -14,7 +14,7 @@
     },
   },
   "packages": {
-    "@agiterra/wire-tools": ["@agiterra/wire-tools@github:agiterra/wire-tools#9b58d16", { "dependencies": { "@modelcontextprotocol/sdk": "^1.29.0", "pino": "^10.3.1" } }, "agiterra-wire-tools-9b58d16", "sha512-DS3M8MjLrZmWcXL6pMgPcuIY6HUj/FGhM2XAowGCRAGYlo6wh4q+mHW4I/DiEHeKEweveaNs0xIw4WW2OqwJnw=="],
+    "@agiterra/wire-tools": ["@agiterra/wire-tools@github:agiterra/wire-tools#dc5ba69", { "dependencies": { "@modelcontextprotocol/sdk": "^1.29.0", "pino": "^10.3.1" } }, "agiterra-wire-tools-dc5ba69", "sha512-b0mQKVLEDA8Ezm/8OtWPYQm4R2T6U3liz2Mk/xPTDy45IeeL3JFtllW/8y3Jm/zAj3DbAbaHag1rnitv8+c7Yg=="],
 
     "@hono/node-server": ["@hono/node-server@1.19.14", "", { "peerDependencies": { "hono": "^4" } }, "sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw=="],
 
