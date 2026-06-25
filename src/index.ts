@@ -81,9 +81,14 @@ const CONTEXT_WINDOW = Number(process.env.CONTEXT_WINDOW_TOKENS ?? "1000000"); /
 const RECYCLE_PERCENT = Number(process.env.RECYCLE_AT_PERCENT ?? "80");
 const recycleThreshold = Math.floor((CONTEXT_WINDOW * RECYCLE_PERCENT) / 100);
 
-// Per-turn runaway budgets (generous — a legit heavy turn stays well under; the
-// net catches a single turn spiraling, which recycle structurally can't). 0 = off.
-const MAX_TURN_TOKENS = Number(process.env.MAX_TURN_TOKENS ?? "250000");
+// Per-turn runaway budgets — catch a SINGLE turn spiraling (which recycle can't,
+// being cumulative + between-turns). MUST sit well above a legit heavy turn:
+// 2026-06-25 the 250k default INTERRUPTED real initial-tooling turns (strudel/
+// profiterole/kolache all ran ~268k on their first turn → false interrupt →
+// "Conversation interrupted" + the agent left idle). 600k clears legit turns by
+// a wide margin and still trips below recycle (80% of 1M = 800k); the wall-clock
+// guard + recycle are the real backstops. 0 = off.
+const MAX_TURN_TOKENS = Number(process.env.MAX_TURN_TOKENS ?? "600000");
 const MAX_TURN_SECONDS = Number(process.env.MAX_TURN_SECONDS ?? "900");
 
 // Localhost port to host the agent's `wire` MCP over StreamableHTTP. The

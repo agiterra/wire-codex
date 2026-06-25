@@ -38,7 +38,8 @@
  *      FREEZE_THRESHOLD_MIN (default 15), REALERT_MIN (default 60),
  *      CAPTURE_FAIL_THRESHOLD_MIN (default = FREEZE_THRESHOLD_MIN — minutes a
  *      crews.db-live agent may stay uncapturable before alerting),
- *      WATCH_RUNTIMES (default "codex" — codex-bridged is headless, no TUI),
+ *      WATCH_RUNTIMES (default "codex,wire-codex,codex-bridged" — wire-codex runs a
+ *      `codex resume --remote` TUI viewer in its screen, so it CAN freeze + needs watching),
  *      CREWS_DB, WORK_MARKER (regex, default "working", case-insensitive).
  */
 
@@ -56,7 +57,7 @@ const CAPTURE_FAIL_THRESHOLD_MIN = Number(
   process.env.CAPTURE_FAIL_THRESHOLD_MIN ?? String(THRESHOLD_MIN),
 );
 const REALERT_MIN = Number(process.env.REALERT_MIN ?? "60");
-const WATCH_RUNTIMES = (process.env.WATCH_RUNTIMES ?? "codex")
+const WATCH_RUNTIMES = (process.env.WATCH_RUNTIMES ?? "codex,wire-codex,codex-bridged")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
