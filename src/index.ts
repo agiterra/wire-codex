@@ -42,8 +42,8 @@
  *   WIRE_MCP_PORT       optional — localhost port to host the `wire` MCP (StreamableHTTP) for the codex agent; unset = not hosted
  *   CONTEXT_WINDOW_TOKENS  optional — model context window for recycle math (default 1000000; gpt-5.5 = 1M)
  *   RECYCLE_AT_PERCENT     optional — recycle threshold percent (default 80)
- *   MAX_TURN_TOKENS        optional — per-turn token-delta budget; interrupt a runaway turn past it (default 250000; 0 disables)
- *   MAX_TURN_SECONDS       optional — per-turn wall-clock budget in seconds (default 900; 0 disables)
+ *   MAX_TURN_TOKENS        optional — per-turn token-delta budget (default 0 = OFF; the per-turn guard is misguided, see below — set >0 only to deliberately re-arm)
+ *   MAX_TURN_SECONDS       optional — per-turn wall-clock budget in seconds (default 0 = OFF; same)
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -81,15 +81,27 @@ const CONTEXT_WINDOW = Number(process.env.CONTEXT_WINDOW_TOKENS ?? "1000000"); /
 const RECYCLE_PERCENT = Number(process.env.RECYCLE_AT_PERCENT ?? "80");
 const recycleThreshold = Math.floor((CONTEXT_WINDOW * RECYCLE_PERCENT) / 100);
 
-// Per-turn runaway budgets — catch a SINGLE turn spiraling (which recycle can't,
-// being cumulative + between-turns). MUST sit well above a legit heavy turn:
-// 2026-06-25 the 250k default INTERRUPTED real initial-tooling turns (strudel/
-// profiterole/kolache all ran ~268k on their first turn → false interrupt →
-// "Conversation interrupted" + the agent left idle). 600k clears legit turns by
-// a wide margin and still trips below recycle (80% of 1M = 800k); the wall-clock
-// guard + recycle are the real backstops. 0 = off.
-const MAX_TURN_TOKENS = Number(process.env.MAX_TURN_TOKENS ?? "600000");
-const MAX_TURN_SECONDS = Number(process.env.MAX_TURN_SECONDS ?? "900");
+// Per-turn runaway guard — DISABLED BY DEFAULT (2026-06-25, Tim's call: the
+// whole idea is misguided). Both budgets default to 0 = off; the guard never
+// issues turn/interrupt unless an operator deliberately re-arms it via env.
+//
+// Why it's gone: there is no honest discriminator for "a SINGLE turn is a
+// runaway" via an external hard-interrupt.
+//   - TOKENS can't work: a turn's token-DELTA and the thread's CUMULATIVE total
+//     are nearly the same magnitude (a heavy turn fills most of the context in
+//     one shot). Two miscalibrations proved it — 250k false-interrupted ~268k
+//     initial turns; 600k STILL false-interrupted legit turns (strudel 605k,
+//     kolache 640k, profiterole 650k delta, all real work). Legit deltas (650k)
+//     run right up against recycle (80% of 1M = 800k), so no "above-legit yet
+//     below-recycle" band exists. The original runaway it targeted (123k in an
+//     EMPTY dir, no tools) is a test artifact, SMALLER than a normal turn.
+//   - TIME can't work either: an agent doing great work for 20+ minutes is NOT
+//     a runaway. A wall-clock interrupt punishes exactly the deep turns we want.
+// Either way the false interrupt drops the agent into codex's placeholder-prompt
+// wedge (22-32 min idle) — the cure is worse than the disease. The real backstop
+// for context is recycle (cumulative, codex-native compact, no hard interrupt).
+const MAX_TURN_TOKENS = Number(process.env.MAX_TURN_TOKENS ?? "0");
+const MAX_TURN_SECONDS = Number(process.env.MAX_TURN_SECONDS ?? "0");
 
 // Localhost port to host the agent's `wire` MCP over StreamableHTTP. The
 // launcher assigns it and writes the matching url into config.toml. 0 = skip.
