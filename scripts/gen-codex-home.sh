@@ -40,6 +40,12 @@ model = "gpt-5.5"
 model_reasoning_effort = "${MODEL_REASONING_EFFORT:-high}"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+# Headless spawns: NEVER run the interactive CLI update check. On a new release
+# (e.g. 0.140→0.141) it shows a blocking "Update available… Press enter to
+# continue" TUI prompt that freezes app-server startup BEFORE the injector's
+# conn.start() — so no Wire connect, 0% codex (Strudel/ENG-3196, 2026-06-24).
+# Codex is updated centrally, not per-spawn.
+check_for_update_on_startup = false
 
 [features]
 rmcp_client = true
