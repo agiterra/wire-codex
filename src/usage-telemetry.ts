@@ -36,17 +36,39 @@ function isoFromEpochSec(s: unknown): string | null {
   return typeof s === "number" ? new Date(s * 1000).toISOString() : null;
 }
 
+/** Parse a credentials blob → {token, expiresAt} or null. */
+function parseCred(raw: string): { token: string; expiresAt: number } | null {
+  try {
+    const o = JSON.parse(raw)?.claudeAiOauth;
+    if (!o?.accessToken) return null;
+    return { token: o.accessToken, expiresAt: Number(o.expiresAt ?? 0) };
+  } catch {
+    return null;
+  }
+}
+
 async function collectClaude(): Promise<Record<string, Window | string> | null> {
   try {
-    // Keychain first (macOS CC default), credentials file fallback.
-    let raw = "";
-    try {
-      raw = execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: "utf8" });
-    } catch {
-      raw = execSync(`cat "${process.env.HOME}/.claude/.credentials.json"`, { encoding: "utf8" });
+    // Pick the FRESHEST UNEXPIRED token across both sources. A blind
+    // keychain-first / file-fallback (the old shape) fed the stale file's token
+    // straight to the API whenever the LaunchAgent's non-interactive keychain
+    // read hiccupped → spurious oauth/usage 401 (the credential-sync-fanned
+    // file is access-token-only and goes stale; keychain stays CC-refreshed).
+    const sources: Array<{ name: string; read: () => string }> = [
+      { name: "keychain", read: () => execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: "utf8" }) },
+      { name: "file", read: () => execSync(`cat "${process.env.HOME}/.claude/.credentials.json"`, { encoding: "utf8" }) },
+    ];
+    const now = Date.now();
+    let best: { token: string; expiresAt: number; name: string } | null = null;
+    for (const s of sources) {
+      let cred: { token: string; expiresAt: number } | null = null;
+      try { cred = parseCred(s.read()); } catch { cred = null; }
+      if (!cred) continue;
+      if (cred.expiresAt && cred.expiresAt <= now) continue; // skip expired
+      if (!best || cred.expiresAt > best.expiresAt) best = { ...cred, name: s.name };
     }
-    const token = JSON.parse(raw)?.claudeAiOauth?.accessToken;
-    if (!token) throw new Error("no claudeAiOauth.accessToken in credentials");
+    if (!best) throw new Error("no unexpired claudeAiOauth.accessToken in keychain or credentials file — collector cred stale (needs a CC token refresh / re-login on this host)");
+    const token = best.token;
 
     const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
       headers: { Authorization: `Bearer ${token}`, "anthropic-beta": "oauth-2025-04-20" },
