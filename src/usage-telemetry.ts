@@ -58,14 +58,30 @@ async function collectClaude(): Promise<Record<string, Window | string> | null> 
       { name: "keychain", read: () => execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: "utf8" }) },
       { name: "file", read: () => execSync(`cat "${process.env.HOME}/.claude/.credentials.json"`, { encoding: "utf8" }) },
     ];
-    const now = Date.now();
-    let best: { token: string; expiresAt: number; name: string } | null = null;
-    for (const s of sources) {
-      let cred: { token: string; expiresAt: number } | null = null;
-      try { cred = parseCred(s.read()); } catch { cred = null; }
-      if (!cred) continue;
-      if (cred.expiresAt && cred.expiresAt <= now) continue; // skip expired
-      if (!best || cred.expiresAt > best.expiresAt) best = { ...cred, name: s.name };
+    const pick = (): { token: string; expiresAt: number; name: string } | null => {
+      const now = Date.now();
+      let best: { token: string; expiresAt: number; name: string } | null = null;
+      for (const s of sources) {
+        let cred: { token: string; expiresAt: number } | null = null;
+        try { cred = parseCred(s.read()); } catch { cred = null; }
+        if (!cred) continue;
+        if (cred.expiresAt && cred.expiresAt <= now) continue; // skip expired
+        if (!best || cred.expiresAt > best.expiresAt) best = { ...cred, name: s.name };
+      }
+      return best;
+    };
+    // Both sources can momentarily miss AT A COLLECTION: the gui LaunchAgent's
+    // non-interactive keychain read intermittently hiccups, and the file may be
+    // mid-rewrite from credential-sync — the ~5min self-healing blips (08:32→08:37,
+    // 17:17→17:22). A single miss shouldn't fail the whole hourly run, so retry a
+    // few times before declaring the cred stale. (NB: CLAUDE_CODE_OAUTH_TOKEN /
+    // the setup-token do NOT help here — the setup-token lacks the user:profile
+    // scope the oauth/usage endpoint requires; the fresh accessToken must come
+    // from the keychain/file.)
+    let best = pick();
+    for (let attempt = 0; !best && attempt < 3; attempt++) {
+      await new Promise((r) => setTimeout(r, 800));
+      best = pick();
     }
     if (!best) throw new Error("no unexpired claudeAiOauth.accessToken in keychain or credentials file — collector cred stale (needs a CC token refresh / re-login on this host)");
     const token = best.token;
