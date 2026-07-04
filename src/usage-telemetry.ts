@@ -58,32 +58,50 @@ async function collectClaude(): Promise<Record<string, Window | string> | null> 
       { name: "keychain", read: () => execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: "utf8" }) },
       { name: "file", read: () => execSync(`cat "${process.env.HOME}/.claude/.credentials.json"`, { encoding: "utf8" }) },
     ];
+    // Evaluate one source, returning its cred (if usable) AND a human-readable
+    // status that DISTINGUISHES failure modes — so a blip's error string tells
+    // you whether it's transient (retry rides it out) or a genuine expiry
+    // (needs a re-login). Ambiguity here cost two false "cred is dead"
+    // escalations (brioche 08:32, 09:41 — both were transient read-misses).
+    const evalSource = (s: { name: string; read: () => string }): { cred: { token: string; expiresAt: number } | null; status: string } => {
+      let raw: string;
+      try { raw = s.read(); } catch (e) { return { cred: null, status: `read-failed (${String((e as Error).message ?? e).split("\n")[0].slice(0, 60)})` }; }
+      const cred = parseCred(raw);
+      if (!cred) return { cred: null, status: "no claudeAiOauth.accessToken (absent or mid-rewrite)" };
+      if (cred.expiresAt && cred.expiresAt <= Date.now()) return { cred, status: `EXPIRED at ${new Date(cred.expiresAt).toISOString()}` };
+      return { cred, status: cred.expiresAt ? `ok (expires ${new Date(cred.expiresAt).toISOString()})` : "ok (access-token-only, no expiry)" };
+    };
     const pick = (): { token: string; expiresAt: number; name: string } | null => {
-      const now = Date.now();
       let best: { token: string; expiresAt: number; name: string } | null = null;
       for (const s of sources) {
-        let cred: { token: string; expiresAt: number } | null = null;
-        try { cred = parseCred(s.read()); } catch { cred = null; }
+        const { cred } = evalSource(s);
         if (!cred) continue;
-        if (cred.expiresAt && cred.expiresAt <= now) continue; // skip expired
+        if (cred.expiresAt && cred.expiresAt <= Date.now()) continue; // skip expired
         if (!best || cred.expiresAt > best.expiresAt) best = { ...cred, name: s.name };
       }
       return best;
     };
     // Both sources can momentarily miss AT A COLLECTION: the gui LaunchAgent's
-    // non-interactive keychain read intermittently hiccups, and the file may be
-    // mid-rewrite from credential-sync — the ~5min self-healing blips (08:32→08:37,
-    // 17:17→17:22). A single miss shouldn't fail the whole hourly run, so retry a
-    // few times before declaring the cred stale. (NB: CLAUDE_CODE_OAUTH_TOKEN /
-    // the setup-token do NOT help here — the setup-token lacks the user:profile
-    // scope the oauth/usage endpoint requires; the fresh accessToken must come
-    // from the keychain/file.)
+    // non-interactive keychain read intermittently hiccups (ACL/access), and the
+    // file may be mid-rewrite from credential-sync — the ~5min self-healing blips
+    // (08:32→08:37, 17:17→17:22, 09:41→09:43). A single miss shouldn't fail the
+    // whole hourly run, so retry before declaring stale. (NB: CLAUDE_CODE_OAUTH_TOKEN
+    // / the setup-token do NOT help — the setup-token lacks the user:profile scope
+    // the oauth/usage endpoint requires; the fresh accessToken must come from the
+    // keychain/file, kept refreshed by a running Claude Code.)
     let best = pick();
     for (let attempt = 0; !best && attempt < 3; attempt++) {
       await new Promise((r) => setTimeout(r, 800));
       best = pick();
     }
-    if (!best) throw new Error("no unexpired claudeAiOauth.accessToken in keychain or credentials file — collector cred stale (needs a CC token refresh / re-login on this host)");
+    if (!best) {
+      const diag = sources.map((s) => `${s.name}: ${evalSource(s).status}`).join("; ");
+      throw new Error(
+        `no usable Claude accessToken after retries — ${diag}. ` +
+        `(read-failed / no-accessToken = TRANSIENT keychain/file blip, recovers next poll; ` +
+        `EXPIRED-at = GENUINE expiry, needs a running Claude Code to refresh the keychain or an operator re-login)`,
+      );
+    }
     const token = best.token;
 
     const res = await fetch("https://api.anthropic.com/api/oauth/usage", {
