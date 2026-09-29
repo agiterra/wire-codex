@@ -22,8 +22,10 @@
  */
 
 import { execSync } from "child_process";
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "fs";
 import { createAuthJwt, importKeyPair } from "@agiterra/wire-tools/crypto";
 import { CodexAppServer } from "./app-server.js";
+import { classifyCredBlob, describeCred, historyLine, nextHistory, noTokenMessage, type ClaudeHistory } from "./claude-cred-status.js";
 
 const WIRE_URL = (process.env.WIRE_URL ?? "http://localhost:9800").replace(/\/$/, "");
 const DEST = process.env.TELEMETRY_DEST ?? "brioche";
@@ -36,15 +38,35 @@ function isoFromEpochSec(s: unknown): string | null {
   return typeof s === "number" ? new Date(s * 1000).toISOString() : null;
 }
 
-/** Parse a credentials blob → {token, expiresAt} or null. */
-function parseCred(raw: string): { token: string; expiresAt: number } | null {
+const HISTORY_FILE = `${process.env.HOME}/.wire/usage-telemetry.claude-history.json`;
+
+/** Previous Claude failure history: null = no file yet (fresh counter), "unreadable" = present but unusable. */
+function readHistory(): ClaudeHistory | null | "unreadable" {
+  if (!existsSync(HISTORY_FILE)) return null;
   try {
-    const o = JSON.parse(raw)?.claudeAiOauth;
-    if (!o?.accessToken) return null;
-    return { token: o.accessToken, expiresAt: Number(o.expiresAt ?? 0) };
-  } catch {
-    return null;
+    return JSON.parse(readFileSync(HISTORY_FILE, "utf8")) as ClaudeHistory;
+  } catch (e) {
+    console.error(`usage-telemetry: history file ${HISTORY_FILE} unreadable:`, e);
+    return "unreadable";
   }
+}
+
+const prevHistory = readHistory();
+let recordedHistory: ClaudeHistory | null | undefined;
+
+/** Advance + persist the history exactly once per run; returns what the error text should cite. */
+function recordHistory(ok: boolean): ClaudeHistory | null {
+  if (recordedHistory !== undefined) return recordedHistory;
+  if (prevHistory === "unreadable") return (recordedHistory = null);
+  const h = nextHistory(prevHistory, ok, new Date().toISOString());
+  try {
+    const tmp = `${HISTORY_FILE}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(h) + "\n");
+    renameSync(tmp, HISTORY_FILE);
+  } catch (e) {
+    console.error(`usage-telemetry: could not write ${HISTORY_FILE}:`, e);
+  }
+  return (recordedHistory = h);
 }
 
 async function collectClaude(): Promise<Record<string, Window | string> | null> {
@@ -54,22 +76,22 @@ async function collectClaude(): Promise<Record<string, Window | string> | null> 
     // straight to the API whenever the LaunchAgent's non-interactive keychain
     // read hiccupped → spurious oauth/usage 401 (the credential-sync-fanned
     // file is access-token-only and goes stale; keychain stays CC-refreshed).
-    const sources: Array<{ name: string; read: () => string }> = [
-      { name: "keychain", read: () => execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: "utf8" }) },
-      { name: "file", read: () => execSync(`cat "${process.env.HOME}/.claude/.credentials.json"`, { encoding: "utf8" }) },
+    const credFile = `${process.env.HOME}/.claude/.credentials.json`;
+    const sources: Array<{ name: string; read: () => string; mtime: () => string | null }> = [
+      { name: "keychain", read: () => execSync('security find-generic-password -s "Claude Code-credentials" -w', { encoding: "utf8" }), mtime: () => null },
+      { name: "file", read: () => readFileSync(credFile, "utf8"), mtime: () => statSync(credFile).mtime.toISOString() },
     ];
-    // Evaluate one source, returning its cred (if usable) AND a human-readable
-    // status that DISTINGUISHES failure modes — so a blip's error string tells
-    // you whether it's transient (retry rides it out) or a genuine expiry
-    // (needs a re-login). Ambiguity here cost two false "cred is dead"
-    // escalations (brioche 08:32, 09:41 — both were transient read-misses).
-    const evalSource = (s: { name: string; read: () => string }): { cred: { token: string; expiresAt: number } | null; status: string } => {
+    // Evaluate one source, returning its cred (if usable) AND a status that
+    // says what was OBSERVED (read failure / unparseable / parsed-but-no-token /
+    // expired) — never a forecast. See claude-cred-status.ts.
+    const evalSource = (s: (typeof sources)[number]): { cred: { token: string; expiresAt: number } | null; status: string } => {
       let raw: string;
       try { raw = s.read(); } catch (e) { return { cred: null, status: `read-failed (${String((e as Error).message ?? e).split("\n")[0].slice(0, 60)})` }; }
-      const cred = parseCred(raw);
-      if (!cred) return { cred: null, status: "no claudeAiOauth.accessToken (absent or mid-rewrite)" };
-      if (cred.expiresAt && cred.expiresAt <= Date.now()) return { cred, status: `EXPIRED at ${new Date(cred.expiresAt).toISOString()}` };
-      return { cred, status: cred.expiresAt ? `ok (expires ${new Date(cred.expiresAt).toISOString()})` : "ok (access-token-only, no expiry)" };
+      let mtime: string | null = null;
+      try { mtime = s.mtime(); } catch (e) { console.error(`usage-telemetry: mtime of ${s.name} failed:`, e); }
+      const blob = classifyCredBlob(raw);
+      const status = describeCred(blob, Date.now(), mtime);
+      return { cred: blob.kind === "ok" ? { token: blob.token, expiresAt: blob.expiresAt } : null, status };
     };
     const pick = (): { token: string; expiresAt: number; name: string } | null => {
       let best: { token: string; expiresAt: number; name: string } | null = null;
@@ -81,14 +103,12 @@ async function collectClaude(): Promise<Record<string, Window | string> | null> 
       }
       return best;
     };
-    // Both sources can momentarily miss AT A COLLECTION: the gui LaunchAgent's
-    // non-interactive keychain read intermittently hiccups (ACL/access), and the
-    // file may be mid-rewrite from credential-sync — the ~5min self-healing blips
-    // (08:32→08:37, 17:17→17:22, 09:41→09:43). A single miss shouldn't fail the
-    // whole hourly run, so retry before declaring stale. (NB: CLAUDE_CODE_OAUTH_TOKEN
-    // / the setup-token do NOT help — the setup-token lacks the user:profile scope
-    // the oauth/usage endpoint requires; the fresh accessToken must come from the
-    // keychain/file, kept refreshed by a running Claude Code.)
+    // A source can miss at one instant (the gui LaunchAgent's non-interactive
+    // keychain read has hiccupped; the file can be mid-rewrite), so retry
+    // briefly before failing the run. (NB: CLAUDE_CODE_OAUTH_TOKEN / the
+    // setup-token do NOT help — the setup-token lacks the user:profile scope
+    // the oauth/usage endpoint requires; the fresh accessToken must come from
+    // the keychain/file, kept refreshed by a running Claude Code.)
     let best = pick();
     for (let attempt = 0; !best && attempt < 3; attempt++) {
       await new Promise((r) => setTimeout(r, 800));
@@ -96,11 +116,7 @@ async function collectClaude(): Promise<Record<string, Window | string> | null> 
     }
     if (!best) {
       const diag = sources.map((s) => `${s.name}: ${evalSource(s).status}`).join("; ");
-      throw new Error(
-        `no usable Claude accessToken after retries — ${diag}. ` +
-        `(read-failed / no-accessToken = TRANSIENT keychain/file blip, recovers next poll; ` +
-        `EXPIRED-at = GENUINE expiry, needs a running Claude Code to refresh the keychain or an operator re-login)`,
-      );
+      throw new Error(noTokenMessage(diag, recordHistory(false)));
     }
     const token = best.token;
 
@@ -113,6 +129,7 @@ async function collectClaude(): Promise<Record<string, Window | string> | null> 
       used_percent: d[k]?.utilization ?? null,
       resets_at: d[k]?.resets_at ?? null,
     });
+    recordHistory(true);
     return {
       plan: "claude_max",
       five_hour: win("five_hour"),
@@ -121,7 +138,9 @@ async function collectClaude(): Promise<Record<string, Window | string> | null> 
       seven_day_opus: win("seven_day_opus"),
     };
   } catch (e) {
-    errors.push(`claude: ${String(e)}`);
+    const already = recordedHistory !== undefined;
+    const h = recordHistory(false);
+    errors.push(`claude: ${String(e)}${already ? "" : ` — ${historyLine(h)}`}`);
     return null;
   }
 }
