@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { classifyCredBlob, describeCred, historyLine, nextHistory, noTokenMessage } from "./claude-cred-status";
+import { classifyCredBlob, describeCred, historyLine, nextHistory, noTokenMessage, noticeAction, notCollectedBlock, parseClaudeSwitch } from "./claude-cred-status";
 
 const NOW = Date.parse("2026-09-29T21:22:27Z");
 
@@ -62,5 +62,32 @@ describe("noTokenMessage", () => {
     expect(m).not.toMatch(/TRANSIENT|recovers next poll/i);
     expect(m).toContain("1 consecutive failed poll(s)");
     expect(m).toContain("cannot tell a momentary blip from a persistent condition");
+  });
+});
+
+describe("Claude opt-out", () => {
+  test("switch: unset/empty/on collect, off skips, anything else invalid", () => {
+    expect(parseClaudeSwitch(undefined)).toEqual({ mode: "on" });
+    expect(parseClaudeSwitch("")).toEqual({ mode: "on" });
+    expect(parseClaudeSwitch("on")).toEqual({ mode: "on" });
+    expect(parseClaudeSwitch("off")).toEqual({ mode: "off" });
+    expect(parseClaudeSwitch(" OFF ")).toEqual({ mode: "off" });
+    expect(parseClaudeSwitch("0")).toEqual({ mode: "invalid", raw: "0" });
+    expect(parseClaudeSwitch("false")).toEqual({ mode: "invalid", raw: "false" });
+  });
+  test("not-collected block: every window null, never a number; history carried frozen", () => {
+    const h = { counter_since: "2026-09-29T21:36:18.602Z", last_ok_at: null, consecutive_failures: 7 };
+    const b = notCollectedBlock(h);
+    expect(b.state).toBe("not_collected");
+    for (const k of ["five_hour", "seven_day", "seven_day_sonnet", "seven_day_opus"] as const) expect(b[k]).toBeNull();
+    expect(b.history_frozen).toEqual(h);
+    expect(notCollectedBlock("unreadable").history_frozen).toBe("unreadable");
+    expect(notCollectedBlock(null).history_frozen).toBeNull();
+  });
+  test("notice fires once per opt-out", () => {
+    expect(noticeAction(true, false)).toBe("notify");
+    expect(noticeAction(true, true)).toBe("skip");
+    expect(noticeAction(false, true)).toBe("clear");
+    expect(noticeAction(false, false)).toBe("none");
   });
 });

@@ -64,3 +64,47 @@ export function noTokenMessage(diag: string, h: ClaudeHistory | null): string {
     `EXPIRED-at = the stored token is past expiry: a running Claude Code refreshes the keychain copy, otherwise an operator re-login.)`
   );
 }
+
+// ── Per-host opt-out (USAGE_TELEMETRY_CLAUDE=off) ─────────────────────────────
+// Chariot has had no Claude login since 2026-06-09, so every hourly run published
+// status=failed for a probe nobody uses (Brioche 644921 approved the opt-out). "off"
+// skips the poll; the Claude block then says NOT COLLECTED with null usage. It must
+// never look like a measured 0% or a healthy reading.
+
+export type ClaudeSwitch = { mode: "on" } | { mode: "off" } | { mode: "invalid"; raw: string };
+
+/** Unset/""/"on" collect; "off" skips (case-insensitive). Anything else is invalid: collect AND report it. */
+export function parseClaudeSwitch(raw: string | undefined): ClaudeSwitch {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (v === "" || v === "on") return { mode: "on" };
+  if (v === "off") return { mode: "off" };
+  return { mode: "invalid", raw: raw as string };
+}
+
+export const NOT_COLLECTED_REASON = "disabled on this host (USAGE_TELEMETRY_CLAUDE=off)";
+
+/**
+ * Machine-readable Claude block while disabled. Every usage window is null. The failure
+ * history is carried as it stood when polling stopped (`history_frozen`), so it stays
+ * attributable as history. It is not advanced, and it is not a current failure.
+ */
+export function notCollectedBlock(history: ClaudeHistory | null | "unreadable") {
+  return {
+    state: "not_collected" as const,
+    reason: NOT_COLLECTED_REASON,
+    five_hour: null,
+    seven_day: null,
+    seven_day_sonnet: null,
+    seven_day_opus: null,
+    history_frozen: history === "unreadable" ? "unreadable" : history,
+  };
+}
+
+/**
+ * One-time notice bookkeeping from a marker file. off + no marker → notify (then write marker);
+ * off + marker → skip; on + marker → clear (so a later opt-out notifies again); on + none → nothing.
+ */
+export function noticeAction(off: boolean, markerExists: boolean): "notify" | "skip" | "clear" | "none" {
+  if (off) return markerExists ? "skip" : "notify";
+  return markerExists ? "clear" : "none";
+}

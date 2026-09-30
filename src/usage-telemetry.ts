@@ -18,14 +18,17 @@
  * If even the publish fails, the process exits non-zero so launchd logs it.
  *
  * Env: AGENT_ID + AGENT_PRIVATE_KEY (dedicated telemetry identity),
- *      WIRE_URL, TELEMETRY_DEST (default brioche).
+ *      WIRE_URL, TELEMETRY_DEST (default brioche),
+ *      USAGE_TELEMETRY_CLAUDE=off to skip the Claude poll on a host with no Claude
+ *      login. The claude block then reads state=not_collected with null windows, and
+ *      one ipc notice is sent per opt-out (marker file). See claude-cred-status.ts.
  */
 
 import { execSync } from "child_process";
-import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { createAuthJwt, importKeyPair } from "@agiterra/wire-tools/crypto";
 import { CodexAppServer } from "./app-server.js";
-import { classifyCredBlob, describeCred, historyLine, nextHistory, noTokenMessage, type ClaudeHistory } from "./claude-cred-status.js";
+import { classifyCredBlob, describeCred, historyLine, nextHistory, noTokenMessage, noticeAction, NOT_COLLECTED_REASON, notCollectedBlock, parseClaudeSwitch, type ClaudeHistory } from "./claude-cred-status.js";
 
 const WIRE_URL = (process.env.WIRE_URL ?? "http://localhost:9800").replace(/\/$/, "");
 const DEST = process.env.TELEMETRY_DEST ?? "brioche";
@@ -190,7 +193,13 @@ async function publishTopic(topic: string, payload: Record<string, unknown>): Pr
   if (!res.ok) throw new Error(`wire publish HTTP ${res.status}: ${await res.text().catch(() => "")}`);
 }
 
-const claude = await collectClaude();
+const claudeSwitch = parseClaudeSwitch(process.env.USAGE_TELEMETRY_CLAUDE);
+if (claudeSwitch.mode === "invalid") {
+  errors.push(`config: USAGE_TELEMETRY_CLAUDE=${JSON.stringify(claudeSwitch.raw)} is not "on" or "off"; collecting Claude anyway`);
+}
+const claudeOff = claudeSwitch.mode === "off";
+// Off: no poll, and the history file is left untouched (prevHistory is shown frozen).
+const claude = claudeOff ? notCollectedBlock(prevHistory) : await collectClaude();
 const codex = await collectCodex();
 const payload = {
   source: AGENT_ID,
@@ -217,9 +226,24 @@ if (typeof codexWeekly === "number" && codexWeekly > CODEX_WEEKLY_MAX) {
   breaches.push(`Codex weekly at ${codexWeekly}% (>${CODEX_WEEKLY_MAX}%) — rebalance toward Claude`);
 }
 
+const NOTICE_MARKER = `${process.env.HOME}/.wire/usage-telemetry.claude-off-notified`;
+
 try {
   await publishTopic("usage.telemetry", payload);
   console.log(`published usage.telemetry status=${payload.status}`);
+  const act = noticeAction(claudeOff, existsSync(NOTICE_MARKER));
+  if (act === "notify") {
+    const h = prevHistory === "unreadable" ? null : prevHistory;
+    await publishTopic("ipc", {
+      from: AGENT_ID,
+      re: "CLAUDE NOT COLLECTED ON THIS HOST",
+      text: `Claude: not collected on this host — ${NOT_COLLECTED_REASON}. From now on usage.telemetry carries claude.state=not_collected with null windows (UNKNOWN, not 0%). Codex collection is unchanged. Failure history as it stood when polling stopped: ${historyLine(h)}. This notice is sent once; removing the env var resumes polling.`,
+    });
+    writeFileSync(NOTICE_MARKER, new Date().toISOString() + "\n");
+    console.log("published one-time Claude not-collected notice");
+  } else if (act === "clear") {
+    try { unlinkSync(NOTICE_MARKER); } catch (e) { console.error(`usage-telemetry: could not clear ${NOTICE_MARKER}:`, e); }
+  }
   if (breaches.length) {
     // Higher-signal alert as an ipc message so it surfaces to Brioche directly,
     // not just in the telemetry stream.
